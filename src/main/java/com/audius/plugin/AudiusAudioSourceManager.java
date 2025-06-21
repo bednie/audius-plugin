@@ -16,6 +16,7 @@ import com.sedmelluq.discord.lavaplayer.track.BasicAudioPlaylist;
 import org.apache.http.client.methods.HttpGet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import java.io.DataInput;
 import java.io.DataOutput;
@@ -31,7 +32,7 @@ import java.util.regex.Pattern;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.FAULT;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
 
-
+@Service
 public class AudiusAudioSourceManager implements AudioSourceManager {
 
     private static final Logger log = LoggerFactory.getLogger(AudiusAudioSourceManager.class);
