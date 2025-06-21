@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.FAULT;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
 
-@Service
+// @Service
 public class AudiusAudioSourceManager implements AudioSourceManager {
 
     private static final Logger log = LoggerFactory.getLogger(AudiusAudioSourceManager.class);
