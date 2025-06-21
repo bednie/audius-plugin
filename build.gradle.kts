@@ -1,13 +1,15 @@
+// build.gradle.kts
+
 plugins {
     java
     alias(libs.plugins.lavalink)
 }
 
-group = "com.example"
+group = "com.audius"
 version = "0.1.0"
 
 lavalinkPlugin {
-    name = "plugin-template"
+    name = "audius-plugin"
     apiVersion = libs.versions.lavalink.api
     serverVersion = libs.versions.lavalink.server
 }
