@@ -205,7 +205,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             // (e.g., /v1/tracks?slug=...&handle=... or /v1/playlists?slug=...&handle=...).
             String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
                     providerUrl,
-                    //URLEncoder.encode(fullUrl, StandardCharsets.UTF_8),
                     fullUrl,
                     URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
 
@@ -372,7 +371,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             // Step 1: Resolve the playlist URL to get playlist metadata and track IDs
             String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
                     providerUrl,
-                    URLEncoder.encode(playlistUrl, StandardCharsets.UTF_8),
+                    playlistUrl,
                     URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
 
             log.debug("Audius resolve API URL for playlist: {}", resolveUrl);
