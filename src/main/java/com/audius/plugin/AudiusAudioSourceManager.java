@@ -205,7 +205,8 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             // (e.g., /v1/tracks?slug=...&handle=... or /v1/playlists?slug=...&handle=...).
             String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
                     providerUrl,
-                    URLEncoder.encode(fullUrl, StandardCharsets.UTF_8),
+                    //URLEncoder.encode(fullUrl, StandardCharsets.UTF_8),
+                    fullUrl,
                     URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
 
             log.debug("Audius resolve API URL: {}", resolveUrl);
