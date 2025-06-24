@@ -51,7 +51,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
     private static final String DISCOVERY_PROVIDERS_URL = "https://api.audius.co"; // Endpoint to get list of available providers
 
-    private static final String APP_NAME = "YourLavalinkAudiusPlugin"; // TODO: Replace with a unique name for attribution
+    private static final String APP_NAME = "AudiusLavaLinkPlugin";
 
     // --- Instance Variables ---
     private final HttpInterfaceManager httpInterfaceManager;
