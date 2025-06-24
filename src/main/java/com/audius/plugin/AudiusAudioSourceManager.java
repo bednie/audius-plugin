@@ -273,60 +273,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
 
     /**
-     * Fetches the full JSON details for a single track by its Audius ID.
-     *
-     * @param providerUrl The URL of the selected Audius discovery provider.
-     * @param trackId     The ID of the track to fetch.
-     * @return A JsonBrowser representing the track's full data, or null if not found or an error occurs.
-     * @throws IOException If an IO error occurs during the HTTP request.
-     */
-    private JsonBrowser fetchTrackDetailsById(String providerUrl, String trackId) throws IOException {
-        log.debug("Attempting to fetch track details for ID '{}' using provider {}", trackId, providerUrl);
-
-        try {
-            // Construct the API URL for fetching a track by ID
-            String apiUrl = String.format("%s/v1/tracks/%s",
-                    providerUrl,
-                    URLEncoder.encode(trackId, StandardCharsets.UTF_8)); // Ensure track ID is URL encoded
-
-            log.debug("Audius get track by ID API URL: {}", apiUrl);
-
-            // Use the generic helper to fetch JSON
-            // fetchJsonFromUrl returns null for not found or top-level API errors
-            JsonBrowser response = fetchJsonFromUrl(apiUrl);
-
-            if (response == null) {
-                log.warn("Audius track details API for ID '{}' returned no data (resource not found or API error via fetchJsonFromUrl).", trackId);
-                // fetchJsonFromUrl already logged the underlying reason (not found/error)
-                return null; // Indicate track not found or couldn't be fetched
-            }
-
-            // The track data object is directly under the "data" key for this endpoint
-            JsonBrowser trackNode = response.get("data");
-
-            // Basic validation that we got a valid track object
-            if (trackNode == null || trackNode.isNull() || trackNode.get("id").isNull()) {
-                log.warn("Audius track details API response for ID '{}' is missing the main 'data' field or track ID.", trackId);
-                // Treat as if the track wasn't found or data was invalid
-                return null;
-            }
-
-            log.debug("Successfully fetched track details for ID '{}'.", trackId);
-            return trackNode; // Return the JSON browser for the single track object
-
-        } catch (IOException e) {
-            log.error("Failed to fetch Audius track details for ID '{}' due to IO error: {}", trackId, e.getMessage());
-            // Propagate IO exceptions so the caller can decide how to handle it (e.g., skip track or fail playlist)
-            throw e;
-        } catch (Exception e) {
-            log.error("An unexpected error occurred fetching track details for ID '{}'.", trackId, e);
-            // Wrap other exceptions in IOException for consistency or handle as needed
-            throw new IOException("An unexpected error occurred fetching track details for track ID " + trackId, e);
-        }
-    }
-
-
-    /**
      * Handles loading a complete Audius playlist from a URL.
      * Resolves the playlist URL, fetches track IDs, then fetches details for each track.
      *
@@ -338,7 +284,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         log.info("Attempting to load Audius playlist from URL {} using provider {}", playlistUrl, providerUrl);
 
         try {
-            // Step 1: Resolve the playlist URL to get playlist metadata and track IDs
+            // Step 1: Resolve the playlist URL to get playlist metadata and its ID
             String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
                     providerUrl,
                     playlistUrl,
@@ -356,87 +302,91 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             // The resolved item (the playlist) is expected to be the first element in the "data" array
             JsonBrowser playlistNode = resolveResponse.get("data").index(0);
 
-            // Validate the playlist node structure
-            if (playlistNode == null || playlistNode.isNull() || playlistNode.get("playlist_name") == null || playlistNode.get("playlist_name").isNull()) {
-                log.warn("Audius resolve API response for playlist URL '{}' is missing the main 'data' field or playlist name.", playlistUrl);
-                throw new FriendlyException("Could not load Audius playlist: Invalid data structure in response.", SUSPICIOUS, null);
+            // Validate the playlist node structure and get playlist info
+            if (playlistNode == null || playlistNode.isNull() || playlistNode.get("playlist_name") == null || playlistNode.get("playlist_name").isNull() || playlistNode.get("id") == null || playlistNode.get("id").isNull()) {
+                log.warn("Audius resolve API response for playlist URL '{}' is missing the main 'data' field, playlist name, or ID.", playlistUrl);
+                throw new FriendlyException("Could not load Audius playlist: Invalid data structure in resolve response.", SUSPICIOUS, null);
             }
 
-            // Extract playlist-level metadata
             String playlistTitle = playlistNode.get("playlist_name").text();
-            String playlistPermalink = playlistNode.get("permalink").text();
+            String playlistId = playlistNode.get("id").text(); // Get the playlist ID
+            String playlistPermalink = playlistNode.get("permalink").text(); // Keep permalink for track source URL
 
-            // Get the list of track ID objects from the "playlist_contents" array
-            JsonBrowser playlistContentsNode = playlistNode.get("playlist_contents");
-            List<JsonBrowser> trackIdNodesList = Collections.emptyList();
+            // Step 2: Fetch all tracks for the playlist using the Get Playlist Tracks endpoint
+            String playlistTracksUrl = String.format("%s/v1/playlists/%s/tracks?app_name=%s",
+                    providerUrl,
+                    URLEncoder.encode(playlistId, StandardCharsets.UTF_8), // URL encode the playlist ID
+                    URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
 
-            if (playlistContentsNode != null && !playlistContentsNode.isNull()) {
-                try {
-                    // Attempt to get values (treats as array if successful)
-                    trackIdNodesList = playlistContentsNode.values();
-                } catch (Exception e) { // values() might throw if not an array or other issue
-                    log.warn("Playlist URL '{}' contained 'playlist_contents' but could not be processed as an array.", playlistUrl, e);
-                    // Keep trackIdNodesList as empty list
-                }
-            } else {
-                log.warn("Playlist URL '{}' response did not contain a non-null 'playlist_contents' field.", playlistUrl);
-            }
+            log.debug("Audius get playlist tracks API URL: {}", playlistTracksUrl);
 
+            JsonBrowser playlistTracksResponse = fetchJsonFromUrl(playlistTracksUrl);
 
-            if (trackIdNodesList.isEmpty()) {
-                log.info("Playlist '{}' from URL '{}' is empty or 'playlist_contents' was not a valid list.", playlistTitle, playlistUrl);
-                // Return an empty playlist
+            if (playlistTracksResponse == null) {
+                log.info("Audius get playlist tracks API for playlist ID '{}' returned no data.", playlistId);
+                // It's possible a valid playlist exists but has no tracks, or there was an error.
+                // Treat as an empty playlist in this context if the initial resolve was successful.
                 return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", Collections.emptyList(), null, false);
             }
 
-            // Step 2: Fetch details for each track ID and build AudioTrack objects
-            List<AudioTrack> tracks = new ArrayList<>();
-            log.debug("Fetching details for {} tracks in playlist '{}'.", trackIdNodesList.size(), playlistTitle);
+            JsonBrowser tracksDataNode = playlistTracksResponse.get("data");
 
-            for (JsonBrowser trackIdNode : trackIdNodesList) {
-                // Check if trackIdNode is valid and has a non-null/empty "track_id" field
-                if (trackIdNode == null || trackIdNode.isNull() || trackIdNode.get("track_id") == null || trackIdNode.get("track_id").isNull() || trackIdNode.get("track_id").text() == null || trackIdNode.get("track_id").text().isEmpty()) {
-                    log.warn("Skipping invalid track entry in playlist from URL '{}' (missing or invalid 'track_id'). Node: {}", playlistUrl, trackIdNode != null ? trackIdNode.toString() : "null");
-                    continue; // Skip this entry if track_id is missing or invalid
+            List<JsonBrowser> trackNodes = Collections.emptyList();
+            if (tracksDataNode != null && !tracksDataNode.isNull()) {
+                try {
+                    // Use values() to get the list of track nodes from the 'data' array
+                    trackNodes = tracksDataNode.values();
+                    log.debug("Successfully extracted {} track nodes from playlist tracks response for playlist '{}' (ID: {}).", trackNodes.size(), playlistTitle, playlistId);
+                } catch (Exception e) {
+                    log.error("Failed to get values from 'data' node in playlist tracks response for playlist ID '{}'. Response structure unexpected.", playlistId, e);
+                    trackNodes = Collections.emptyList(); // Ensure trackNodes is empty on parsing failure
+                }
+            } else {
+                log.warn("Audius get playlist tracks API response for playlist ID '{}' does not contain a non-null 'data' field.", playlistId);
+            }
+
+
+            if (trackNodes.isEmpty()) {
+                log.info("Audius playlist tracks API for playlist '{}' (ID: {}) returned no track data or the data could not be processed as a list.", playlistTitle, playlistId);
+                // Return an empty playlist if no tracks were found or processed
+                return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", Collections.emptyList(), null, false);
+            }
+
+            List<AudioTrack> tracks = new ArrayList<>();
+            log.debug("Building AudioTrack objects for {} tracks in playlist '{}'.", trackNodes.size(), playlistTitle);
+
+            for (JsonBrowser trackNode : trackNodes) {
+                // Basic validation for each track node using available methods
+                JsonBrowser idNode = trackNode != null ? trackNode.get("id") : null;
+                if (trackNode == null || trackNode.isNull() || idNode == null || idNode.isNull() || idNode.text() == null || idNode.text().isEmpty()) {
+                    log.warn("Skipping null or invalid track node in playlist '{}' (ID: {}) tracks response (missing ID). Node: {}", playlistTitle, playlistId, trackNode != null ? trackNode.toString() : "null");
+                    continue; // Skip this invalid track node
                 }
 
-                String trackId = trackIdNode.get("track_id").text(); // Extract the track_id string
-
                 try {
-                    // Fetch the full details for the individual track
-                    JsonBrowser trackDetailsNode = fetchTrackDetailsById(providerUrl, trackId);
-
-                    if (trackDetailsNode != null) {
-                        // Build the AudioTrack object using the existing helper method
-                        // Pass the playlist's permalink as the source URL for tracks within the playlist
-                        tracks.add(buildTrackFromNode(trackDetailsNode, playlistPermalink));
-                    } else {
-                        // fetchTrackDetailsById logs a reason if it returns null
-                        log.warn("Could not fetch details for track ID '{}' in playlist from URL '{}'. Skipping track.", trackId, playlistUrl);
-                    }
-                } catch (IOException e) {
-                    log.warn("IO error fetching details for track ID '{}' in playlist from URL '{}'. Skipping track.", trackId, playlistUrl, e);
-                    // Skip track on IO errors during fetching its details
+                    // Build track from the node using the helper
+                    // Pass the playlist's permalink as the source URL for tracks within the playlist
+                    tracks.add(buildTrackFromNode(trackNode, playlistPermalink));
                 } catch (FriendlyException e) {
-                    log.warn("Skipping track ID '{}' in playlist from URL '{}' due to error building track: {}", trackId, playlistUrl, e.getMessage());
-                    // Skip track if buildTrackFromNode fails (e.g., missing essential fields)
+                    // Skip this track if building failed (e.g., missing essential fields)
+                    log.warn("Skipping track ID '{}' in playlist '{}' (ID: {}) due to incomplete data: {}", idNode.text(), playlistTitle, playlistId, e.getMessage());
                 } catch (Exception e) {
-                    log.error("An unexpected error occurred processing track ID '{}' in playlist from URL '{}'. Skipping track.", trackId, playlistUrl, e);
+                    log.error("An unexpected error occurred processing track ID '{}' in playlist '{}' (ID: {}). Skipping track.", idNode.text(), playlistTitle, playlistId, e);
                     // Catch any other unexpected errors during track processing
                 }
             }
 
-            if (tracks.isEmpty() && !trackIdNodesList.isEmpty()) {
-                log.warn("Playlist '{}' from URL '{}' contained track IDs, but no valid tracks could be processed.", playlistTitle, playlistUrl);
-                // You might decide to return NO_TRACK here if no tracks could be loaded at all
+            if (tracks.isEmpty() && !trackNodes.isEmpty()) {
+                log.warn("Playlist '{}' (ID: {}) contained track data, but no valid AudioTracks could be built.", playlistTitle, playlistId);
+                // Return an empty playlist if track data was present but none could be built
                 return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", Collections.emptyList(), null, false);
             } else if (tracks.isEmpty()) {
-                log.info("Playlist '{}' from URL '{}' is empty after processing (already logged).", playlistTitle, playlistUrl);
+                log.info("Playlist '{}' (ID: {}) is empty after processing (already logged).", playlistTitle, playlistId);
             }
 
 
             // Step 3: Create and return the BasicAudioPlaylist
-            log.info("Successfully loaded playlist '{}' with {} tracks from URL '{}'.", playlistTitle, tracks.size(), playlistUrl);
+            log.info("Successfully loaded playlist '{}' with {} tracks from URL '{}' (ID: {}).", playlistTitle, tracks.size(), playlistUrl, playlistId);
             return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", tracks, null, false); // selectedTrack is null, isSearchResult is false
 
         } catch (FriendlyException e) {
@@ -450,7 +400,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             throw new FriendlyException("An unexpected error occurred while loading the Audius playlist.", FAULT, e);
         }
     }
-
 
     @Override
     public AudioItem loadItem(AudioPlayerManager manager, AudioReference reference) {
