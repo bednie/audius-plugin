@@ -45,8 +45,12 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
     private static final Pattern audiusUrlPattern = Pattern.compile(AUDIUS_URL_REGEX);
 
     // Match Audius playlists
-    private static final String AUDIUS_PLAYLIST_URL_REGEX = "^https?://(?:www\\\\.)?audius\\\\.co/([^/]+)/(?:playlist|album)/([^/]+)(?:/.*)?$";
+    private static final String AUDIUS_PLAYLIST_URL_REGEX = "^https?://(?:www\\.)?audius\\.co/([^/]+)/playlist/([^/]+)(?:/.*)?$";
     private static final Pattern audiusPlayListUrlPattern = Pattern.compile(AUDIUS_PLAYLIST_URL_REGEX);
+
+    // Match Audius album playlists
+    private static final String AUDIUS_ALBUM_URL_REGEX = "^https?://(?:www\\.)?audius\\.co/([^/]+)/album/([^/]+)(?:/.*)?$";
+    private static final Pattern audiusAlbumUrlPattern = Pattern.compile(AUDIUS_ALBUM_URL_REGEX);
 
 
     private static final String DISCOVERY_PROVIDERS_URL = "https://api.audius.co"; // Endpoint to get list of available providers
@@ -401,6 +405,179 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         }
     }
 
+
+    /**
+     * Handles loading a complete Audius album from a URL.
+     * Resolves the album URL, fetches track IDs, then fetches details for each track.
+     *
+     * @param providerUrl The URL of the selected Audius discovery provider.
+     * @param albumUrl    The full URL of the Audius album.
+     * @return A BasicAudioPlaylist object containing the album information and its tracks.
+     */
+    private AudioItem handleAudiusAlbumUrl(String providerUrl, String albumUrl) {
+        log.info("Attempting to load Audius album from URL {} using provider {}", albumUrl, providerUrl);
+
+        String albumTitle = "Unknown Album"; // Default title
+        String albumId = null;
+        String albumPermalink = null;
+
+        try {
+            // Step 1: Resolve the album URL to get basic info and ID
+            String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
+                    providerUrl,
+                    URLEncoder.encode(albumUrl, StandardCharsets.UTF_8),
+                    URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
+
+            log.debug("Audius resolve API URL for album: {}", resolveUrl);
+
+            JsonBrowser resolveResponse = fetchJsonFromUrl(resolveUrl);
+
+            if (resolveResponse == null || !resolveResponse.get("data").isList() || resolveResponse.get("data").values().isEmpty()) {
+                log.info("Audius resolve API for album URL '{}' returned no data or invalid structure (album not found).", albumUrl);
+                return AudioReference.NO_TRACK; // Album URL did not resolve to a resource
+            }
+
+            JsonBrowser albumNodeFromResolve = resolveResponse.get("data").index(0);
+
+            // Validate the album node structure and get album info
+            // Note: Audius API uses "playlist_name" and "playlist_contents" for albums too.
+            if (albumNodeFromResolve == null || albumNodeFromResolve.isNull() || albumNodeFromResolve.get("playlist_name") == null || albumNodeFromResolve.get("playlist_name").isNull() || albumNodeFromResolve.get("id") == null || albumNodeFromResolve.get("id").isNull() || !albumNodeFromResolve.get("is_album").asBoolean(false)) {
+                log.warn("Audius resolve API response for album URL '{}' is missing essential fields or is not marked as an album.", albumUrl);
+                throw new FriendlyException("Could not load Audius album: Invalid data structure in resolve response or not an album.", SUSPICIOUS, null);
+            }
+
+            albumTitle = albumNodeFromResolve.get("playlist_name").text(); // Album title is in playlist_name
+            albumId = albumNodeFromResolve.get("id").text(); // Get the album ID
+            albumPermalink = albumNodeFromResolve.get("permalink").text(); // Keep permalink for track source URL
+
+            log.debug("Resolved album: '{}' (ID: {}), Permalink: {}", albumTitle, albumId, albumPermalink);
+
+
+            // Step 2: Fetch album details BY ID to get the list of track IDs
+            // This endpoint returns the album object itself, containing playlist_contents
+            String albumDetailsUrl = String.format("%s/v1/playlists/%s?app_name=%s", // Note: Used /v1/playlists/{id} instead of /v1/playlists/{id}/tracks
+                    providerUrl,
+                    URLEncoder.encode(albumId, StandardCharsets.UTF_8), // URL encode the album ID
+                    URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
+
+            String albumTracksUrl = String.format("%s/v1/playlists/%s/tracks?app_name=%s", // Stick to the original endpoint used
+                    providerUrl,
+                    URLEncoder.encode(albumId, StandardCharsets.UTF_8),
+                    URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
+
+            log.debug("Audius get album tracks API URL: {}", albumTracksUrl);
+
+            JsonBrowser albumTracksResponse = fetchJsonFromUrl(albumTracksUrl);
+
+            if (albumTracksResponse == null || !albumTracksResponse.get("data").isList() || albumTracksResponse.get("data").values().isEmpty()) {
+                log.info("Audius get album tracks API for album ID '{}' returned no data or invalid structure.", albumId);
+                // Treat as an empty album if the initial resolve was successful but getting track IDs failed.
+                return new BasicAudioPlaylist(albumTitle, Collections.emptyList(), null, false);
+            }
+
+            // The response data contains the album object itself as the first element
+            JsonBrowser albumNodeWithContents = albumTracksResponse.get("data").index(0);
+
+            if (albumNodeWithContents == null || albumNodeWithContents.isNull() || !albumNodeWithContents.get("playlist_contents").isList()) {
+                log.warn("Audius get album tracks API response for album ID '{}' is missing the album node or 'playlist_contents' list.", albumId);
+                // Return an empty playlist if we can't get the track IDs list
+                return new BasicAudioPlaylist(albumTitle, Collections.emptyList(), null, false);
+            }
+
+            // Extract track IDs from the playlist_contents list
+            List<String> trackIds = new ArrayList<>();
+            for (JsonBrowser contentNode : albumNodeWithContents.get("playlist_contents").values()) {
+                JsonBrowser trackIdNode = contentNode.get("track_id");
+                if (trackIdNode != null && !trackIdNode.isNull() && trackIdNode.text() != null && !trackIdNode.text().isEmpty()) {
+                    trackIds.add(trackIdNode.text());
+                } else {
+                    log.warn("Skipping invalid content node in playlist_contents for album '{}' (ID: {}) - missing track_id.", albumTitle, albumId);
+                }
+            }
+
+            log.debug("Extracted {} track IDs from playlist_contents for album '{}' (ID: {}).", trackIds.size(), albumTitle, albumId);
+
+            if (trackIds.isEmpty()) {
+                log.info("Audius album '{}' (ID: {}) contains no track IDs in playlist_contents.", albumTitle, albumId);
+                // Return an empty album playlist if no track IDs were found
+                return new BasicAudioPlaylist(albumTitle, Collections.emptyList(), null, false);
+            }
+
+            // Step 3: Fetch full track details using the extracted track IDs
+            // The /v1/tracks endpoint takes a comma-separated list of IDs
+            // Note: URL encoding is NOT typically applied to the comma *within* the ID list,
+            // but individual IDs *should* be URL-encoded if they could contain special characters.
+            // Audius IDs are base62, so no encoding is strictly needed for the IDs themselves.
+            String trackIdsParam = String.join(",", trackIds);
+
+            String tracksDetailsUrl = String.format("%s/v1/tracks?id=%s&app_name=%s",
+                    providerUrl,
+                    URLEncoder.encode(trackIdsParam, StandardCharsets.UTF_8), // Encoding the whole list as a single parameter value
+                    URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
+
+
+            log.debug("Audius get tracks details API URL: {}", tracksDetailsUrl);
+
+            JsonBrowser tracksDetailsResponse = fetchJsonFromUrl(tracksDetailsUrl);
+
+            List<AudioTrack> tracks = new ArrayList<>();
+            if (tracksDetailsResponse != null && tracksDetailsResponse.get("data").isList()) {
+                log.debug("Building AudioTrack objects for {} tracks fetched from /v1/tracks.", tracksDetailsResponse.get("data").values().size());
+
+                // The /v1/tracks endpoint returns a list of full track objects under 'data'
+                for (JsonBrowser trackNode : tracksDetailsResponse.get("data").values()) {
+                    // Basic validation for each track node using available methods
+                    JsonBrowser idNode = trackNode != null ? trackNode.get("id") : null;
+                    if (trackNode == null || trackNode.isNull() || idNode == null || idNode.isNull() || idNode.text() == null || idNode.text().isEmpty()) {
+                        log.warn("Skipping null or invalid track node from /v1/tracks response for album '{}' (ID: {}) tracks response (missing ID).", albumTitle, albumId);
+                        continue; // Skip this invalid track node
+                    }
+
+                    try {
+                        // Build track from the full track node using the helper
+                        // Pass the album's permalink as the source URL for tracks within the album
+                        tracks.add(buildTrackFromNode(trackNode, albumPermalink));
+                    } catch (FriendlyException e) {
+                        // Skip this track if building failed (e.g., missing essential fields)
+                        log.warn("Skipping track ID '{}' in album '{}' (ID: {}) due to incomplete data: {}", idNode.text(), albumTitle, albumId, e.getMessage());
+                    } catch (Exception e) {
+                        log.error("An unexpected error occurred processing track ID '{}' from /v1/tracks for album '{}' (ID: {}). Skipping track.", idNode.text(), albumTitle, albumId, e);
+                    }
+                }
+                log.debug("Built {} valid AudioTracks for album '{}' (ID: {}).", tracks.size(), albumTitle, albumId);
+
+            } else {
+                log.warn("Audius get tracks details API response for album ID '{}' returned no data or invalid structure from /v1/tracks.", albumId);
+            }
+
+
+            if (tracks.isEmpty() && !trackIds.isEmpty()) {
+                log.warn("Album '{}' (ID: {}) had track IDs, but no valid AudioTracks could be built from /v1/tracks response.", albumTitle, albumId);
+                // Return an empty playlist if track IDs were present but none could be built
+                return new BasicAudioPlaylist(albumTitle, Collections.emptyList(), null, false);
+            } else if (tracks.isEmpty()) {
+                log.info("Album '{}' (ID: {}) is empty after processing (either no IDs or no valid tracks found).", albumTitle, albumId);
+            }
+
+
+            // Step 4: Create and return the BasicAudioPlaylist
+            log.info("Successfully loaded album '{}' with {} tracks from URL '{}' (ID: {}).", albumTitle, tracks.size(), albumUrl, albumId);
+            // Represent album as a playlist
+            return new BasicAudioPlaylist(albumTitle, tracks, null, false); // selectedTrack is null, isSearchResult is false
+
+        } catch (FriendlyException e) {
+            // Re-throw FriendlyExceptions created within this method
+            throw e;
+        } catch (IOException e) {
+            log.error("Failed to load Audius album URL '{}' due to IO error.", albumUrl, e);
+            throw new FriendlyException("Failed to load Audius album due to a network error.", FAULT, e);
+        } catch (Exception e) {
+            log.error("An unexpected error occurred during Audius album loading for '{}'.", albumUrl, e);
+            throw new FriendlyException("An unexpected error occurred while loading the Audius album.", FAULT, e);
+        }
+    }
+
+
     @Override
     public AudioItem loadItem(AudioPlayerManager manager, AudioReference reference) {
         if (selectedDiscoveryProvider == null) {
@@ -419,6 +596,14 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             }
         }
 
+        // Match Audius albums
+        Matcher albumUrlMatcher = audiusAlbumUrlPattern.matcher(reference.identifier);
+        if (albumUrlMatcher.matches()) {
+            log.info("Detected Audius album URL: {}", reference.identifier);
+            return handleAudiusAlbumUrl(selectedDiscoveryProvider, reference.identifier);
+        }
+
+        // Match Audius playlists
         Matcher playlistUrlMatcher = audiusPlayListUrlPattern.matcher(reference.identifier);
         if (playlistUrlMatcher.matches()) {
             log.info("Detected Audius playlist URL: {}", reference.identifier);
