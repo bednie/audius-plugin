@@ -45,7 +45,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
     private static final Pattern audiusUrlPattern = Pattern.compile(AUDIUS_URL_REGEX);
 
     // Match Audius playlists
-    private static final String AUDIUS_PLAYLIST_URL_REGEX = "^https?://(?:www\\.)?audius\\.co/([^/]+)/playlist/([^/]+)(?:/.*)?$";
+    private static final String AUDIUS_PLAYLIST_URL_REGEX = "^https?://(?:www\\\\.)?audius\\\\.co/([^/]+)/(?:playlist|album)/([^/]+)(?:/.*)?$";
     private static final Pattern audiusPlayListUrlPattern = Pattern.compile(AUDIUS_PLAYLIST_URL_REGEX);
 
 
