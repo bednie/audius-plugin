@@ -404,7 +404,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             throw new FriendlyException("An unexpected error occurred while loading the Audius playlist.", FAULT, e);
         }
     }
-
+  
 
     /**
      * Handles loading a complete Audius album from a URL.
@@ -527,7 +527,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         }
     }
 
-
+  
     @Override
     public AudioItem loadItem(AudioPlayerManager manager, AudioReference reference) {
         if (selectedDiscoveryProvider == null) {
