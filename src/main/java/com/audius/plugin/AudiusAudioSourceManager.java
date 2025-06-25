@@ -52,26 +52,18 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
     private static final String AUDIUS_ALBUM_URL_REGEX = "^https?://(?:www\\.)?audius\\.co/([^/]+)/album/([^/]+)(?:/.*)?$";
     private static final Pattern audiusAlbumUrlPattern = Pattern.compile(AUDIUS_ALBUM_URL_REGEX);
 
-
     private static final String DISCOVERY_PROVIDERS_URL = "https://api.audius.co"; // Endpoint to get list of available providers
-
     private static final String APP_NAME = "AudiusLavaLinkPlugin";
-
-    // --- Instance Variables ---
     private final HttpInterfaceManager httpInterfaceManager;
     private volatile String selectedDiscoveryProvider = null;
 
-    // --- Constructor ---
     public AudiusAudioSourceManager() {
         this.httpInterfaceManager = HttpClientTools.createDefaultThreadLocalManager();
         log.info("Initializing AudiusAudioSourceManager...");
-        // Move initialization logic from @PostConstruct method to the constructor
         fetchAndSelectDiscoveryProvider();
         log.info("AudiusAudioSourceManager initialized. Provider: {}", selectedDiscoveryProvider != null ? selectedDiscoveryProvider : "None selected");
     }
 
-
-    // Method to fetch the list of discovery providers and select one
     private void fetchAndSelectDiscoveryProvider() {
         log.info("Fetching Audius discovery providers from {}", DISCOVERY_PROVIDERS_URL);
         List<JsonBrowser> providers = Collections.emptyList();
@@ -101,7 +93,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
                         providers = potentialProviders;
                         log.debug("Attempted to get values from data node. List size: {}", providers.size());
                     } else {
-                        log.info("Audius discovery providers response contains data, but it's not a non-empty array of items."); // Corrected log message, removed 'query'
+                        log.info("Audius discovery providers response contains data, but it's not a non-empty array of items.");
                     }
 
                 } catch (Exception e) {
@@ -149,7 +141,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
     @Override
     public AudioTrack decodeTrack(AudioTrackInfo trackInfo, DataInput input) throws IOException {
-        // Ensure trackInfo is not null (shouldn't happen in practice, but defensive coding)
         if (trackInfo == null) {
             log.error("Attempted to decode track with null AudioTrackInfo.");
             throw new IOException("Cannot decode track: Provided AudioTrackInfo is null.");
@@ -176,7 +167,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         }
     }
 
-    // Main method to handle Audius URLs (tracks, playlists) using the /resolve endpoint
     private AudioItem handleAudiusUrl(String providerUrl, String fullUrl) {
         log.info("Attempting to resolve Audius URL {} using provider {}", fullUrl, providerUrl);
 
@@ -191,47 +181,36 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             log.debug("Audius resolve API URL: {}", resolveUrl);
 
-            // fetchJsonFromUrl handles network errors, API errors (not resource not found),
-            // and returns null if a resource not found error is detected.
             JsonBrowser response = fetchJsonFromUrl(resolveUrl); // This follows the redirect
 
-            // fetchJsonFromUrl now returns null for resource not found errors, check here.
             if (response == null) {
                 log.info("Audius resolve API for URL '{}' returned no data (resource not found via fetchJsonFromUrl).", fullUrl);
                 return AudioReference.NO_TRACK; // Treat resource not found as no track
             }
 
             JsonBrowser resourceNode = response.get("data");
-
-            // Remove the check for 'kindNode' as 'kind' is not at this level.
             JsonBrowser resourceIdNode = resourceNode != null ? resourceNode.get("id") : null;
 
-            // This condition now only checks if the data node is null, empty, or missing a valid ID.
             if (resourceNode == null || resourceNode.isNull() || resourceIdNode == null || resourceIdNode.isNull() || resourceIdNode.text() == null || resourceIdNode.text().isEmpty()) {
                 log.warn("Audius resolve API response 'data' field is missing or invalid (missing ID). Final Response Data: {}", resourceNode != null ? resourceNode.toString() : "null");
                 throw new FriendlyException("Could not resolve Audius URL: Invalid data structure in response after resolution.", SUSPICIOUS, null);
             }
 
-            String resourceId = resourceIdNode.text(); // Get the ID text
-
-            // Check for fields characteristic of a track or playlist.
-            JsonBrowser resourceTitleNode = resourceNode.get("title"); // Common in tracks
+            String resourceId = resourceIdNode.text();
+            JsonBrowser resourceTitleNode = resourceNode.get("title");
 
             if (resourceTitleNode != null && !resourceTitleNode.isNull() && resourceTitleNode.text() != null && !resourceTitleNode.text().isEmpty()) {
-                // It looks like a track (has an ID and a title)
                 log.info("Resolved URL '{}' to a track with ID '{}'.", fullUrl, resourceId);
-                return buildTrackFromNode(resourceNode, fullUrl); // Build track directly from resourceNode
+                return buildTrackFromNode(resourceNode, fullUrl);
             } else {
-                // It has a valid ID but doesn't look like a track (missing title) or a playlist (missing playlist_name)
                 log.warn("Resolved URL '{}' to resource with ID '{}' but unable to determine type (missing title or playlist_name). Resource Data: {}", fullUrl, resourceId, resourceNode);
                 throw new FriendlyException("Could not resolve Audius URL: Unable to determine resource type.", SUSPICIOUS, null);
             }
 
-
         } catch (FriendlyException e) {
-            throw e; // Re-throw FriendlyExceptions we created
+            throw e;
         } catch (IOException e) {
-            log.error("Failed to load Audius URL '{}' due to IO error: {}", fullUrl, e.getMessage()); // Log just the message to avoid excessive stacktrace
+            log.error("Failed to load Audius URL '{}' due to IO error: {}", fullUrl, e.getMessage());
             throw new FriendlyException("Failed to load Audius URL.", FAULT, e);
         } catch (Exception e) {
             log.error("An unexpected error occurred during Audius URL loading for '{}'.", fullUrl, e);
@@ -239,12 +218,9 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         }
     }
 
-
-    // Helper to build an AudioTrack from a JSON node (dataNode content for a track)
     private AudioTrack buildTrackFromNode(JsonBrowser trackNode, String ignoredSourceUrl) {
         log.debug("Building track from node: {}", trackNode.toString());
 
-        // Field names
         JsonBrowser userInfo = trackNode.get("user");
         String id = trackNode.get("id").text();
         String title = trackNode.get("title").text();
@@ -254,7 +230,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         String permalink = trackNode.get("permalink").text();
         String artworkUrl = getArtworkUrl(trackNode.get("artwork"));
 
-        // Basic validation
         if (id == null || id.isEmpty() || title == null || title.isEmpty() || permalink == null || permalink.isEmpty()) {
             log.warn("Track node missing essential info. ID: {}, Title: {}, Permalink: {}", id, title, permalink);
             throw new FriendlyException("Audius track details are incomplete.", SUSPICIOUS, null);
@@ -264,10 +239,10 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
                 title,
                 author,
                 durationMs,
-                id, // Use the Audius track ID as the identifier
-                false, // isStream
-                permalink, // URI
-                artworkUrl, // Artwork URL
+                id,
+                false,
+                permalink,
+                artworkUrl,
                 null
         );
 
@@ -288,7 +263,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         log.info("Attempting to load Audius playlist from URL {} using provider {}", playlistUrl, providerUrl);
 
         try {
-            // Step 1: Resolve the playlist URL to get playlist metadata and its ID
+            // Resolve the playlist URL to get playlist metadata and its ID
             String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
                     providerUrl,
                     playlistUrl,
@@ -303,7 +278,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
                 return AudioReference.NO_TRACK; // Playlist URL did not resolve to a resource
             }
 
-            // The resolved item (the playlist) is expected to be the first element in the "data" array
             JsonBrowser playlistNode = resolveResponse.get("data").index(0);
 
             // Validate the playlist node structure and get playlist info
@@ -313,13 +287,13 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             }
 
             String playlistTitle = playlistNode.get("playlist_name").text();
-            String playlistId = playlistNode.get("id").text(); // Get the playlist ID
-            String playlistPermalink = playlistNode.get("permalink").text(); // Keep permalink for track source URL
+            String playlistId = playlistNode.get("id").text();
+            String playlistPermalink = playlistNode.get("permalink").text();
 
-            // Step 2: Fetch all tracks for the playlist using the Get Playlist Tracks endpoint
+            // Fetch all tracks for the playlist using the Get Playlist Tracks endpoint
             String playlistTracksUrl = String.format("%s/v1/playlists/%s/tracks?app_name=%s",
                     providerUrl,
-                    URLEncoder.encode(playlistId, StandardCharsets.UTF_8), // URL encode the playlist ID
+                    URLEncoder.encode(playlistId, StandardCharsets.UTF_8),
                     URLEncoder.encode(APP_NAME, StandardCharsets.UTF_8));
 
             log.debug("Audius get playlist tracks API URL: {}", playlistTracksUrl);
@@ -328,8 +302,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             if (playlistTracksResponse == null) {
                 log.info("Audius get playlist tracks API for playlist ID '{}' returned no data.", playlistId);
-                // It's possible a valid playlist exists but has no tracks, or there was an error.
-                // Treat as an empty playlist in this context if the initial resolve was successful.
                 return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", Collections.emptyList(), null, false);
             }
 
@@ -338,12 +310,11 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             List<JsonBrowser> trackNodes = Collections.emptyList();
             if (tracksDataNode != null && !tracksDataNode.isNull()) {
                 try {
-                    // Use values() to get the list of track nodes from the 'data' array
                     trackNodes = tracksDataNode.values();
                     log.debug("Successfully extracted {} track nodes from playlist tracks response for playlist '{}' (ID: {}).", trackNodes.size(), playlistTitle, playlistId);
                 } catch (Exception e) {
                     log.error("Failed to get values from 'data' node in playlist tracks response for playlist ID '{}'. Response structure unexpected.", playlistId, e);
-                    trackNodes = Collections.emptyList(); // Ensure trackNodes is empty on parsing failure
+                    trackNodes = Collections.emptyList();
                 }
             } else {
                 log.warn("Audius get playlist tracks API response for playlist ID '{}' does not contain a non-null 'data' field.", playlistId);
@@ -352,7 +323,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             if (trackNodes.isEmpty()) {
                 log.info("Audius playlist tracks API for playlist '{}' (ID: {}) returned no track data or the data could not be processed as a list.", playlistTitle, playlistId);
-                // Return an empty playlist if no tracks were found or processed
                 return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", Collections.emptyList(), null, false);
             }
 
@@ -360,41 +330,33 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             log.debug("Building AudioTrack objects for {} tracks in playlist '{}'.", trackNodes.size(), playlistTitle);
 
             for (JsonBrowser trackNode : trackNodes) {
-                // Basic validation for each track node using available methods
                 JsonBrowser idNode = trackNode != null ? trackNode.get("id") : null;
                 if (trackNode == null || trackNode.isNull() || idNode == null || idNode.isNull() || idNode.text() == null || idNode.text().isEmpty()) {
                     log.warn("Skipping null or invalid track node in playlist '{}' (ID: {}) tracks response (missing ID). Node: {}", playlistTitle, playlistId, trackNode != null ? trackNode.toString() : "null");
-                    continue; // Skip this invalid track node
+                    continue;
                 }
 
                 try {
-                    // Build track from the node using the helper
-                    // Pass the playlist's permalink as the source URL for tracks within the playlist
                     tracks.add(buildTrackFromNode(trackNode, playlistPermalink));
                 } catch (FriendlyException e) {
-                    // Skip this track if building failed (e.g., missing essential fields)
                     log.warn("Skipping track ID '{}' in playlist '{}' (ID: {}) due to incomplete data: {}", idNode.text(), playlistTitle, playlistId, e.getMessage());
                 } catch (Exception e) {
                     log.error("An unexpected error occurred processing track ID '{}' in playlist '{}' (ID: {}). Skipping track.", idNode.text(), playlistTitle, playlistId, e);
-                    // Catch any other unexpected errors during track processing
                 }
             }
 
             if (tracks.isEmpty() && !trackNodes.isEmpty()) {
                 log.warn("Playlist '{}' (ID: {}) contained track data, but no valid AudioTracks could be built.", playlistTitle, playlistId);
-                // Return an empty playlist if track data was present but none could be built
                 return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", Collections.emptyList(), null, false);
             } else if (tracks.isEmpty()) {
                 log.info("Playlist '{}' (ID: {}) is empty after processing (already logged).", playlistTitle, playlistId);
             }
 
-
-            // Step 3: Create and return the BasicAudioPlaylist
+            // Create and return the BasicAudioPlaylist
             log.info("Successfully loaded playlist '{}' with {} tracks from URL '{}' (ID: {}).", playlistTitle, tracks.size(), playlistUrl, playlistId);
-            return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", tracks, null, false); // selectedTrack is null, isSearchResult is false
+            return new BasicAudioPlaylist(playlistTitle != null ? playlistTitle : "Unknown Playlist", tracks, null, false);
 
         } catch (FriendlyException e) {
-            // Re-throw FriendlyExceptions created within this method
             throw e;
         } catch (IOException e) {
             log.error("Failed to load Audius playlist URL '{}' due to IO error.", playlistUrl, e);
@@ -422,7 +384,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         String albumPermalink = null;
 
         try {
-            // Step 1: Resolve the album URL to get basic info and ID
+            // Resolve the album URL to get basic info and ID
             String resolveUrl = String.format("%s/v1/resolve?url=%s&app_name=%s",
                     providerUrl,
                     URLEncoder.encode(albumUrl, StandardCharsets.UTF_8),
@@ -432,13 +394,11 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             JsonBrowser resolveResponse = fetchJsonFromUrl(resolveUrl);
 
-            // Check for empty or invalid resolve response
             if (resolveResponse == null || !resolveResponse.get("data").isList() || resolveResponse.get("data").values().isEmpty()) {
                 log.info("Audius resolve API for album URL '{}' returned no data or invalid structure (album not found).", albumUrl);
                 return AudioReference.NO_TRACK; // Album URL did not resolve to a resource
             }
 
-            // The resolved item (the album) is expected to be the first element in the "data" array
             JsonBrowser albumNodeFromResolve = resolveResponse.get("data").index(0);
 
             // Validate the album node structure and get album info
@@ -453,7 +413,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             log.debug("Resolved album: '{}' (ID: {}), Permalink: {}", albumTitle, albumId, albumPermalink);
 
-            // Step 2: Fetch album tracks details directly from the /v1/playlists/{id}/tracks endpoint
+            // Fetch album tracks details directly from the /v1/playlists/{id}/tracks endpoint
             String albumTracksUrl = String.format("%s/v1/playlists/%s/tracks?app_name=%s",
                     providerUrl,
                     URLEncoder.encode(albumId, StandardCharsets.UTF_8),
@@ -463,33 +423,26 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             JsonBrowser albumTracksResponse = fetchJsonFromUrl(albumTracksUrl);
 
-            // Check for empty or invalid response from the tracks endpoint
             if (albumTracksResponse == null || !albumTracksResponse.get("data").isList()) {
                 log.info("Audius get album tracks API for album ID '{}' returned no data or invalid structure.", albumId);
-                // Treat as an empty album if getting track data failed.
                 return new BasicAudioPlaylist(albumTitle, Collections.emptyList(), null, false);
             }
 
-            // The 'data' field is a list of track objects according to curl output.
             List<JsonBrowser> trackNodes = albumTracksResponse.get("data").values();
 
             List<AudioTrack> tracks = new ArrayList<>();
             if (!trackNodes.isEmpty()) {
                 log.debug("Processing {} track nodes from /v1/playlists/{}/tracks response.", trackNodes.size(), albumId);
                 for (JsonBrowser trackNode : trackNodes) {
-                    // Basic validation for each track node
                     JsonBrowser idNode = trackNode != null ? trackNode.get("id") : null;
                     if (trackNode == null || trackNode.isNull() || idNode == null || idNode.isNull() || idNode.text() == null || idNode.text().isEmpty()) {
                         log.warn("Skipping null or invalid track node from /v1/playlists/{}/tracks response for album '{}' (ID: {}). Node: {}", albumId, albumTitle, albumId, trackNode != null ? trackNode.toString() : "null");
-                        continue; // Skip this invalid track node
+                        continue;
                     }
 
                     try {
-                        // Build track from the full track node using the helper
-                        // Pass the album's permalink as the source URL for tracks within the album
                         tracks.add(buildTrackFromNode(trackNode, albumPermalink));
                     } catch (FriendlyException e) {
-                        // Skip this track if building failed (e.g., missing essential fields)
                         log.warn("Skipping track ID '{}' in album '{}' (ID: {}) due to incomplete data: {}", idNode.text(), albumTitle, albumId, e.getMessage());
                     } catch (Exception e) {
                         log.error("An unexpected error occurred processing track ID '{}' from /v1/playlists/{}/tracks for album '{}' (ID: {}). Skipping track.", idNode.text(), albumId, albumTitle, albumId, e);
@@ -503,20 +456,18 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             if (tracks.isEmpty() && !trackNodes.isEmpty()) {
                 log.warn("Album '{}' (ID: {}) contained track data in /v1/playlists/{}/tracks, but no valid AudioTracks could be built.", albumTitle, albumId, albumId);
-                // Return an empty playlist if track data was present but none could be built
                 return new BasicAudioPlaylist(albumTitle, Collections.emptyList(), null, false);
             } else if (tracks.isEmpty()) {
                 log.info("Album '{}' (ID: {}) is empty after processing (either no data returned or no valid tracks built).", albumTitle, albumId);
             }
 
 
-            // Step 3: Create and return the BasicAudioPlaylist
+            // Create and return the BasicAudioPlaylist
             log.info("Successfully loaded album '{}' with {} tracks from URL '{}' (ID: {}).", albumTitle, tracks.size(), albumUrl, albumId);
             // Represent album as a playlist
-            return new BasicAudioPlaylist(albumTitle, tracks, null, false); // selectedTrack is null, isSearchResult is false
+            return new BasicAudioPlaylist(albumTitle, tracks, null, false);
 
         } catch (FriendlyException e) {
-            // Re-throw FriendlyExceptions created within this method
             throw e;
         } catch (IOException e) {
             log.error("Failed to load Audius album URL '{}' due to IO error.", albumUrl, e);
@@ -527,7 +478,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         }
     }
 
-  
     @Override
     public AudioItem loadItem(AudioPlayerManager manager, AudioReference reference) {
         if (selectedDiscoveryProvider == null) {
@@ -560,23 +510,20 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             return handleAudiusPlaylistUrl(selectedDiscoveryProvider, reference.identifier);
         }
 
-
         // Handle other direct Audius URLs (including tracks resolved via /v1/resolve)
         Matcher urlMatcher = audiusUrlPattern.matcher(reference.identifier);
         if (urlMatcher.matches()) {
-            log.info("Detected general Audius URL (attempting to resolve): {}", reference.identifier); // Added/Changed log level
-            return handleAudiusUrl(selectedDiscoveryProvider, reference.identifier); // Assuming handleAudiusUrl still handles track URLs
+            log.info("Detected general Audius URL (attempting to resolve): {}", reference.identifier);
+            return handleAudiusUrl(selectedDiscoveryProvider, reference.identifier);
         }
 
-
-        return null; // Not an Audius item identifier
+        return null;
     }
-
 
     // Helper method to extract artwork URL from the nested artwork object
     private String getArtworkUrl(JsonBrowser artworkNode) {
         if (artworkNode == null || artworkNode.isNull()) {
-            return null; // No artwork node
+            return null;
         }
         // Try to get a preferred size, fallback if not available
         JsonBrowser urlNode = artworkNode.get("480x480");
@@ -599,36 +546,30 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
 
             if (response == null || response.isNull()) {
                 log.warn("API endpoint {} returned null or empty response.", url);
-                // *** CORRECTED: Treat null/empty response as resource not found ***
                 log.info("Audius API resource not found (null/empty response) for URL: {}", url);
-                return null; // Return null to indicate no resource found
+                return null;
             }
 
             JsonBrowser error = response.get("error");
             if (error != null && !error.isNull()) {
                 String errorMessage = error.text();
                 log.warn("API endpoint {} returned error: {}", url, errorMessage);
-                // Check if it's a resource not found error based on the message content (VERIFY)
                 if (errorMessage != null && (errorMessage.toLowerCase().contains("not found") || errorMessage.toLowerCase().contains("resource for id"))) {
                     // If resource not found, treat as no results rather than a hard error
                     log.info("Audius API resource not found for URL: {}", url);
-                    return null; // Return null to indicate no resource found
+                    return null;
                 }
                 throw new IOException("Audius API error from " + url + ": " + errorMessage);
             }
 
-            // Based on the /v1/tracks?slug&handle JSON, the resource data IS directly in the 'data' field.
-            // fetchJsonFromUrl's job is just to get the JSON and handle top-level API errors and resource not found (by returning null).
-            // The caller (handleAudiusUrl, handleAudiusSearch) will handle the structure within 'data'.
-
-            // If error is null/missing AND data is null/missing, that's still an issue.
             JsonBrowser data = response.get("data");
             if (data == null || data.isNull()) {
                 log.warn("API endpoint {} response is missing non-null 'data' field after successful call (no top-level error). Response: {}", url, response);
                 throw new IOException("Audius API response is missing data field from " + url);
             }
 
-            return response; // Return the full response JSON
+            return response;
+
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {
@@ -637,8 +578,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
         }
     }
 
-
-    // Method to handle Audius search queries (using custom AudiusAudioTrack)
+    // Handle Audius search queries (using custom AudiusAudioTrack)
     private AudioItem handleAudiusSearch(String providerUrl, String query, String sourceUrl) {
         log.info("Attempting to search Audius for '{}' using provider {}", query, providerUrl);
 
@@ -661,7 +601,7 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             if (error != null && !error.isNull()) {
                 String errorMessage = error.text();
                 log.warn("Audius search API for query '{}' returned error: {}", query, errorMessage);
-                return AudioReference.NO_TRACK; // Return NO_TRACK on search API errors
+                return AudioReference.NO_TRACK;
             }
 
             JsonBrowser dataNode = response.get("data");
@@ -694,17 +634,14 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             for (JsonBrowser trackNode : trackNodes) {
                 JsonBrowser idNode = trackNode != null ? trackNode.get("id") : null;
 
-                if (trackNode == null || trackNode.isNull() || idNode == null || idNode.isNull() || idNode.text() == null || idNode.text().isEmpty()) { // Corrected typo: idNodeIdNode -> idNode
+                if (trackNode == null || trackNode.isNull() || idNode == null || idNode.isNull() || idNode.text() == null || idNode.text().isEmpty()) {
                     log.warn("Skipping null or invalid track node in search results for query '{}' (missing ID). Node: {}", query, trackNode != null ? trackNode.toString() : "null");
                     continue;
                 }
 
-                // Build track from the node using the helper
                 try {
-                    // Pass the original search identifier string as sourceUrl for search results
                     tracks.add(buildTrackFromNode(trackNode, sourceUrl));
                 } catch (FriendlyException e) {
-                    // Skip this track if building failed
                     log.warn("Skipping track in search results for query '{}' due to incomplete data: {}", query, e.getMessage());
                 }
             }
@@ -727,7 +664,6 @@ public class AudiusAudioSourceManager implements AudioSourceManager {
             throw new FriendlyException("An unexpected error occurred during Audius search.", FAULT, e);
         }
     }
-
 
     public HttpInterface getHttpInterface() {
         if (httpInterfaceManager == null) {
