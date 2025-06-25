@@ -1,47 +1,83 @@
-# lavalink-plugin-template
+# Lavalink Audius Plugin
 
-This is a template for creating a plugin for [Lavalink](https://github.com/lavalink-devs/Lavalink). It is written in
-java, but you can also use kotlin (version `1.8.22`) if you want.
+`audius-plugin` enables [Audius](https://audius.co/) as an audio source for Lavalink.
 
-## How to use this template
+This document explains how to get and install the Audius plugin for Lavalink.
 
-1. Clone this repository
-2. Rename the package `com.example.plugin` to your package name
-3. Rename the class `ExamplePlugin` to your plugin name
-4. Rename the file `ExamplePlugin.java` to your plugin name
-5. fill in the `lavalinkPlugin` in [build.gradle.kts](build.gradle.kts)
-6. Write your plugin
+## Acknowledgements
 
-## How to test your plugin
+This plugin was built from the [Lavalink Plugin Template](https://github.com/lavalink-devs/lavalink-plugin-template). Thank you to the Template contributors and to the Lavalink project. 
 
-1. Place a `application.yml` file in the root directory (see [here](https://lavalink.dev/configuration/index.html#example-applicationyml) for an example)
-2. Run `./gradlew runLavalink` (for windows: `./gradlew.bat runLavalink`) in the root directory
-3. The plugin will be loaded
-4. You can now test your plugin
-5. If you change something in the plugin, you can just run `./gradlew runLavalink` again
+## Usage
 
-## How to build your plugin
+Once the plugin is installed and Lavalink is restarted, you can use Audius as an audio source in your client.
 
-1. Run `./gradlew build` (for windows: `./gradlew.bat build`) in the root directory
-2. The jar file will be in `build/libs/`
+This plugin supports Audius tracks, albums, and playlist URLs:
+- `https://audius.co/user/track-title`
+- `https://audius.co/user/album/album-title`
+- `https://audius.co/user/playlist/playlist-title`
 
-## How to publish your plugin
 
-This template uses [jitpack](https://jitpack.io/) to publish the plugin. You just need to push your changes to github
-and jitpack will build the plugin for you.
+Also, you may use the `audsearch` prefix for searching:
+`audsearch:some track by an artist`
 
-## How to use your plugin
+Refer to your client's documentation for configuring search sources.
 
-Go to [jitpack](https://jitpack.io/) and paste the link to your repository. There you can find the version you want to use.
+## Prerequisites
+*   Java Development Kit (JDK) 11 or higher installed.
+*   Git installed.
+*   (For building from source) Gradle installed.
 
-```yml
+## Installation Options
+
+### Option 1: Using the JitPack Dependency
+
+This is the easiest method for users currently. You can configure Lavalink to download the plugin on startup by adding the following to your `application.yml` file under the `lavalink` section:
+
+```yaml
 lavalink:
+  # ... other server configurations ...
   plugins:
-    - dependency: com.github.lavalink:lavalink-plugin-template:{VERSION} # replace {VERSION} with the version you want to use from jitpack
-      repository: https://jitpack.io
+    - dependency: com.github.bednie:audius-plugin:{VERSION} # Replace {VERSION} with the latest version from the audius-plugin "Releases" tab at https://jitpack.io/#bednie/audius-plugin/
+      repository: https://jitpack.io # Specify JitPack as the source repository
+  # ... other lavalink configurations ...
+# ... other top-level configurations ...
 ```
 
-## How to get help
+Save your `application.yml` and restart your Lavalink server. Lavalink will read the `plugins` configuration and download the plugin JAR from JitPack.
 
-If you need help, you can join the [Lavalink Discord Server](https://discord.gg/jttmwHTAad) and ask in
-the `#plugin-dev` channel.
+### Option 2: Building from Source
+
+If you prefer to build the plugin yourself and install it locally, you will use the `pluginsDir` feature of Lavalink, which is one of the ways Lavalink loads plugins.
+
+1.  **Clone the Repository:**
+    Clone the plugin's Git repository to your local machine.
+    ```bash
+    git clone https://github.com/bednie/audius-plugin.git
+    cd audius-plugin
+    ```
+
+2.  **Build the Project:**
+    Build the project using Gradle.
+    ```bash
+    ./gradlew build
+    ```
+    This command will compile the source code and package it into a JAR file. Look for the resulting JAR in the `build/libs` directory within your cloned project folder (e.g., `your_project_root/build/libs/audius-plugin-*.jar`).
+
+3.  **Install the Plugin JAR:**
+    Copy the built JAR file into the directory specified by the `pluginsDir` configuration in your Lavalink `application.yml`. This tells Lavalink where to find locally installed plugins.
+
+    Your `application.yml` might include:
+    ```yaml
+    lavalink:
+      server:
+        # ... other configurations ...
+      pluginsDir: "/plugins" # <--- Directory where Lavalink loads local plugins
+    # ... other top-level configurations ...
+    ```
+    Copy the JAR file to the configured `pluginsDir`. For example, if your `pluginsDir` is `/plugins`, you would copy the JAR there. The exact command depends on your setup (e.g., `cp` for local, `scp` for remote). Refer to the official Lavalink documentation for detailed instructions on configuring `pluginsDir` and managing local plugins.
+
+After copying the JAR, restart your Lavalink server to load the plugin from the specified directory.
+
+### Help 
+Please open an issue for help with this plugin.
